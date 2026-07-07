@@ -1,0 +1,35 @@
+{
+  "eventoId": null,
+  "remoteUploadUrl": "https://fotofotoglow.com/upload_profesional.php",
+  "paths": {
+    "incoming": "./data/incoming",
+    "processed": "./data/processed",
+    "failed": "./data/failed"
+  },
+  "ftp": {
+    "host": "0.0.0.0",
+    "port": 2121,
+    "user": "camara",
+    "pass": "cambiar-contraseña"
+  },
+  "admin": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "pin": ""
+  },
+  "uploader": {
+    "pollSeconds": 2,
+    "stableChecks": 3,
+    "stableIntervalSeconds": 0.5,
+    "retrySeconds": 30
+  },
+  "gphoto": {
+    "enabled": false,
+    "mode": "tethered",
+    "binary": "gphoto2",
+    "filenamePrefix": "usb_",
+    "captureTimeoutSeconds": 45,
+    "restartSeconds": 5,
+    "releaseUsbBeforeCapture": true
+  }
+}

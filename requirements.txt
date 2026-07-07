@@ -1,0 +1,2 @@
+pyftpdlib>=1.5.9
+requests>=2.31.0

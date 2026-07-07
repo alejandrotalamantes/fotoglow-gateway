@@ -1,0 +1,12 @@
+# Config local (contraseñas FTP, URLs propias)
+config.json
+
+# Datos de runtime
+data/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+
+# ZIPs / copias
+*.zip
