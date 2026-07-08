@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import requests
 
 from .device import get_device_credentials
-from .state import get_upload_token, save_upload_token
+from .state import get_upload_token, save_upload_token, set_daily_event
 
 log = logging.getLogger("gateway.sync")
 
@@ -45,6 +45,17 @@ def sync_client_token(remote_upload_url: str) -> bool:
         if token:
             save_upload_token(str(token), updated_by="sync")
             log.info("Token de cliente sincronizado (%s)", data.get("usuarioNombre") or "cliente")
+        evento_id = data.get("eventoIdRemoto")
+        titulo = data.get("galeriaRemotasTitulo")
+        if evento_id:
+            try:
+                eid = int(evento_id)
+                if eid > 0:
+                    set_daily_event(eid, galeria_titulo=str(titulo) if titulo else None, updated_by="sync")
+                    log.info("Evento remoto sincronizado: ID %s (%s)", eid, titulo or "galería")
+            except (TypeError, ValueError):
+                pass
+        if token:
             return True
     except requests.RequestException as exc:
         log.debug("No se pudo sincronizar token: %s", exc)
