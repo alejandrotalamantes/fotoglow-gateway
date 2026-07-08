@@ -15,6 +15,16 @@ from .utils import ensure_dir
 
 log = logging.getLogger("gateway.ftp")
 
+_ftp_status: dict[str, object] = {"running": False}
+
+
+def get_ftp_status() -> dict[str, object]:
+    return dict(_ftp_status)
+
+
+def set_ftp_disabled() -> None:
+    _ftp_status.update({"enabled": False, "running": False})
+
 
 def _local_ipv4() -> str | None:
     try:
@@ -25,7 +35,16 @@ def _local_ipv4() -> str | None:
         return None
 
 
-def start_ftp_server(*, host: str, port: int, user: str, password: str, root_dir: Path) -> threading.Thread:
+def start_ftp_server(
+    *,
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    root_dir: Path,
+    passive_port_start: int = 53000,
+    passive_port_end: int = 53099,
+) -> threading.Thread | None:
     ensure_dir(root_dir)
 
     authorizer = DummyAuthorizer()
@@ -33,18 +52,37 @@ def start_ftp_server(*, host: str, port: int, user: str, password: str, root_dir
 
     handler = FTPHandler
     handler.authorizer = authorizer
-    handler.banner = "Cabina Gateway — FTP camara profesional"
+    handler.banner = "FotoGlow Gateway — FTP camara profesional"
 
-    # Rango PASV para cámara en la misma red (hotspot)
-    handler.passive_ports = range(53000, 53100)
+    # Rango PASV para cámara Sony en la misma red (hotspot/LAN)
+    pasv_end = max(passive_port_start, passive_port_end)
+    handler.passive_ports = range(passive_port_start, pasv_end + 1)
     lan_ip = _local_ipv4()
     if lan_ip:
         handler.masquerade_address = lan_ip
-        log.info("FTP PASV masquerade → %s (puertos 53000-53099)", lan_ip)
+        log.info(
+            "FTP PASV masquerade → %s (puertos %s-%s)",
+            lan_ip,
+            passive_port_start,
+            pasv_end,
+        )
 
     server = FTPServer((host, port), handler)
     server.max_cons = 8
     server.max_cons_per_ip = 4
+
+    _ftp_status.update(
+        {
+            "enabled": True,
+            "running": True,
+            "host": host,
+            "port": port,
+            "user": user,
+            "lanIp": lan_ip,
+            "rootDir": str(root_dir),
+            "passivePorts": f"{passive_port_start}-{pasv_end}",
+        }
+    )
 
     def _run() -> None:
         log.info("FTP escuchando en %s:%s → %s", host, port, root_dir)

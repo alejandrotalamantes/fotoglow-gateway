@@ -86,6 +86,7 @@ def record_upload(*, filename: str, evento_id: int, remote_url: str) -> None:
 
 
 def get_status(*, incoming_dir: Path, lan_ip: str | None) -> dict[str, Any]:
+    from .ftp_server import get_ftp_status
     from .gphoto_capture import get_gphoto_status
 
     state = load_state()
@@ -102,5 +103,6 @@ def get_status(*, incoming_dir: Path, lan_ip: str | None) -> dict[str, Any]:
         "lanIp": lan_ip,
         "pendingFiles": pending,
         "lastUpload": last or None,
+        "ftp": get_ftp_status(),
         "gphoto": get_gphoto_status(),
     }

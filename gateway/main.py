@@ -6,7 +6,7 @@ import logging
 import sys
 
 from .config import load_config
-from .ftp_server import start_ftp_server
+from .ftp_server import set_ftp_disabled, start_ftp_server
 from .gphoto_capture import start_gphoto
 from .state import get_evento_id, load_state, save_state
 from .uploader import run_uploader_loop
@@ -27,11 +27,22 @@ def main() -> None:
         sys.exit(1)
 
     ftp = cfg["ftp"]
-    if not ftp["pass"]:
-        print("Error: config.json → ftp.pass no puede estar vacío", file=sys.stderr)
-        sys.exit(1)
-
-    # Migrar eventoId de config.json al estado si el panel aún no tiene valor
+    if ftp.get("enabled", True):
+        if not ftp["pass"]:
+            print("Error: config.json → ftp.pass no puede estar vacío", file=sys.stderr)
+            sys.exit(1)
+        start_ftp_server(
+            host=ftp["host"],
+            port=ftp["port"],
+            user=ftp["user"],
+            password=ftp["pass"],
+            root_dir=cfg["incomingDir"],
+            passive_port_start=ftp.get("passivePortStart", 53000),
+            passive_port_end=ftp.get("passivePortEnd", 53099),
+        )
+    else:
+        logging.getLogger("gateway").info("FTP deshabilitado en config (solo USB)")
+        set_ftp_disabled()
     if get_evento_id() is None and cfg.get("eventoIdFallback"):
         save_state(cfg["eventoIdFallback"], updated_by="config")
         logging.getLogger("gateway").info(
@@ -45,14 +56,6 @@ def main() -> None:
         port=admin["port"],
         incoming_dir=cfg["incomingDir"],
         admin_pin=admin.get("pin") or "",
-    )
-
-    start_ftp_server(
-        host=ftp["host"],
-        port=ftp["port"],
-        user=ftp["user"],
-        password=ftp["pass"],
-        root_dir=cfg["incomingDir"],
     )
 
     # USB vía gphoto2 (opcional; convive con FTP en la misma carpeta incoming/)

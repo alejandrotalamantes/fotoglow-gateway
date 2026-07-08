@@ -37,9 +37,21 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
         last_line = f"{last['filename']} (evento {last.get('eventoId', '?')})"
 
     gphoto = status.get("gphoto") or {}
+    ftp = status.get("ftp") or {}
+    if ftp.get("running"):
+        ftp_ip = ftp.get("lanIp") or ip
+        ftp_line = f"Activo — {ftp_ip}:{ftp.get('port')} usuario {ftp.get('user')}"
+        ftp_class = "ok"
+    elif ftp.get("enabled") is False:
+        ftp_line = "Desactivado"
+        ftp_class = ""
+    else:
+        ftp_line = "No iniciado"
+        ftp_class = "warn"
+
     gphoto_enabled = gphoto.get("enabled")
     if not gphoto_enabled:
-        gphoto_line = "Desactivado (solo FTP)"
+        gphoto_line = "Desactivado"
         gphoto_class = ""
     elif gphoto.get("running"):
         gphoto_line = f"Tethered activo — {gphoto.get('camera') or 'cámara USB'}"
@@ -130,6 +142,7 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
       <div>Fotos en cola: <strong>{pending}</strong></div>
       <div>Último cambio: <strong>{updated}</strong></div>
       <div>Última subida: <strong>{last_line}</strong></div>
+      <div>FTP cámara: <strong class="{ftp_class}">{ftp_line}</strong></div>
       <div>USB gphoto2: <strong class="{gphoto_class}">{gphoto_line}</strong></div>
     </div>
     {capture_btn}

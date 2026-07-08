@@ -7,10 +7,13 @@
     "failed": "./data/failed"
   },
   "ftp": {
+    "enabled": true,
     "host": "0.0.0.0",
     "port": 2121,
     "user": "camara",
-    "pass": "cambiar-contraseña"
+    "pass": "cambiar-contraseña",
+    "passivePortStart": 53000,
+    "passivePortEnd": 53099
   },
   "admin": {
     "host": "0.0.0.0",

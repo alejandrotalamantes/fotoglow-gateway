@@ -41,6 +41,15 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     admin = raw.get("admin") or {}
     gphoto = raw.get("gphoto") or {}
 
+    pasv_start = int(ftp.get("passivePortStart") or 53000)
+    pasv_end = int(ftp.get("passivePortEnd") or 53099)
+    if pasv_end < pasv_start:
+        pasv_end = pasv_start
+
+    ftp_enabled = ftp.get("enabled")
+    if ftp_enabled is None:
+        ftp_enabled = True
+
     # eventoId en config es opcional (fallback); lo normal es usar el panel web
     fallback_evento = raw.get("eventoId")
     try:
@@ -57,10 +66,13 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
         "processedRoot": processed,
         "failedRoot": failed,
         "ftp": {
+            "enabled": bool(ftp_enabled),
             "host": str(ftp.get("host") or "0.0.0.0"),
             "port": int(ftp.get("port") or 2121),
             "user": str(ftp.get("user") or "camara"),
             "pass": str(ftp.get("pass") or ""),
+            "passivePortStart": pasv_start,
+            "passivePortEnd": pasv_end,
         },
         "admin": {
             "host": str(admin.get("host") or "0.0.0.0"),

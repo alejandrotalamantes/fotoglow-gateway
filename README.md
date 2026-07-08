@@ -73,12 +73,64 @@ FTP escuchando en 0.0.0.0:2121
 
 El evento del día se guarda en `data/state.json` (panel web).
 
-## Cámara Sony — FTP (WiFi)
+## Cámara Sony — FTP (WiFi) — A7V, A6700, etc.
 
-- Servidor FTP: **IP de la Pi** (ej. `192.168.43.100`)
-- Puerto: `2121`
-- Usuario/contraseña: los de `config.json`
-- Formato: **JPEG**
+El gateway **ya incluye servidor FTP** (puerto `2121` por defecto). Las fotos van a `data/incoming/` y el uploader las sube al hosting igual que por USB.
+
+### Verificar que FTP está activo
+
+```bash
+journalctl -u cabina-gateway | grep FTP
+# FTP escuchando en 0.0.0.0:2121
+```
+
+Panel web (`:8080`) → línea **FTP cámara: Activo — IP:2121 usuario …**
+
+### Configuración en la cámara (Sony A7V / Alpha)
+
+Cámara y Pi en la **misma red WiFi** (hotspot del celular, router del evento, etc.).
+
+| Campo en la Sony | Valor |
+|------------------|--------|
+| Servidor FTP | IP de la Pi (ej. `192.168.1.99`) |
+| Puerto | `2121` |
+| Usuario | el de `config.json` (`ftp.user`, ej. `fotoglow`) |
+| Contraseña | `ftp.pass` de `config.json` |
+| Modo | **Pasivo** (recomendado) |
+| Destino / carpeta | raíz `/` o vacío (carpeta plana) |
+| Formato transferencia | **JPEG** (no RAW si quieres subida rápida) |
+| Auto transfer | Activado al disparar |
+
+Menú típico Sony: **Red → Opciones de transferencia → FTP → Servidor FTP**
+
+### Firewall en la Pi (si la cámara no conecta)
+
+```bash
+sudo ufw allow 2121/tcp
+sudo ufw allow 53000:53099/tcp
+```
+
+### Probar desde la Pi
+
+```bash
+# Con el servicio corriendo, desde otra máquina en la misma red:
+ftp 192.168.1.99 2121
+# usuario + contraseña → put foto.jpg
+```
+
+### USB + FTP a la vez
+
+Ambos escriben en `data/incoming/`. Puedes usar:
+- **A7V por WiFi FTP** (sin cable)
+- **Otra cámara por USB** (gphoto2)
+- **O la misma cámara por un solo canal** (FTP *o* USB, no ambos a la vez en la misma cámara)
+
+`config.json`:
+
+```json
+"ftp": { "enabled": true, "port": 2121, "user": "fotoglow", "pass": "..." },
+"gphoto": { "enabled": true, "mode": "tethered" }
+```
 
 ## Cámara Sony — USB (gphoto2)
 
