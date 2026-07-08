@@ -1,17 +1,21 @@
-"""Panel web móvil para establecer eventoId (acceso desde el celular del hotspot)."""
+"""Panel web móvil: muestra idRaspberry y configura el evento del día."""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
+import requests
+
+from .device import get_device_credentials
 from .gphoto_capture import get_gphoto_status, trigger_capture
-from .state import get_evento_id, get_status, set_evento_id
+from .state import get_status, set_event_binding
 
 log = logging.getLogger("gateway.web")
 
@@ -25,16 +29,65 @@ def local_ipv4() -> str | None:
         return None
 
 
-def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
+def _origin_from_upload_url(remote_upload_url: str) -> str:
+    parsed = urlparse(remote_upload_url or "")
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("remoteUploadUrl no configurada en config.json")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _normalize_token(raw: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "", str(raw or "").strip())[:64]
+
+
+def _fetch_raspberry_status(remote_upload_url: str, id_raspberry: str) -> dict:
+    origin = _origin_from_upload_url(remote_upload_url)
+    url = f"{origin}/api/public/raspberry/status?idRaspberry={quote(id_raspberry)}"
+    res = requests.get(url, timeout=15)
+    data = res.json() if res.content else {}
+    if res.status_code >= 400:
+        return {"registered": False, "assigned": False, "usuarioNombre": None}
+    return {
+        "registered": True,
+        "assigned": bool(data.get("assigned")),
+        "activo": data.get("activo", True),
+        "usuarioNombre": data.get("usuarioNombre"),
+    }
+
+
+def _validate_upload_token(remote_upload_url: str, token: str) -> dict:
+    origin = _origin_from_upload_url(remote_upload_url)
+    url = f"{origin}/api/public/galerias/upload-validate?token={quote(token)}"
+    res = requests.get(url, timeout=20)
+    data = res.json() if res.content else {}
+    if res.status_code >= 400 or not data.get("ok"):
+        raise ValueError(data.get("message") or "Token de galería no válido")
+    return data
+
+
+def _html_page(*, lan_ip: str | None, admin_port: int, status: dict, cloud: dict) -> str:
     ip = lan_ip or "—"
+    id_rpi = status.get("idRaspberry") or "—"
+    upload_token = status.get("uploadToken") or ""
+    galeria_titulo = status.get("galeriaTitulo") or "—"
     evento = status.get("eventoId")
-    evento_label = str(evento) if evento else "No configurado"
     pending = status.get("pendingFiles", 0)
     updated = status.get("updatedAt") or "—"
     last = status.get("lastUpload") or {}
-    last_line = "—"
-    if last.get("filename"):
-        last_line = f"{last['filename']} (evento {last.get('eventoId', '?')})"
+    last_line = last.get("filename") or "—"
+
+    if cloud.get("assigned"):
+        assign_line = cloud.get("usuarioNombre") or "Cliente asignado"
+        assign_class = "ok"
+    elif cloud.get("registered"):
+        assign_line = "Sin cliente — da este ID al administrador"
+        assign_class = "warn"
+    else:
+        assign_line = "Sin conexión al hosting"
+        assign_class = "warn"
+
+    bind_class = "ok" if upload_token else "warn"
+    bind_label = galeria_titulo if upload_token else "Evento no configurado"
 
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
@@ -57,9 +110,7 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
         gphoto_line = f"Tethered activo — {gphoto.get('camera') or 'cámara USB'}"
         gphoto_class = "ok"
     elif gphoto.get("available"):
-        mode = gphoto.get("mode") or "tethered"
-        cam = gphoto.get("camera") or "sin cámara detectada"
-        gphoto_line = f"{mode} — {cam}"
+        gphoto_line = f"{gphoto.get('mode') or 'tethered'} — {gphoto.get('camera') or 'sin cámara'}"
         gphoto_class = "warn" if not gphoto.get("camera") else "ok"
     else:
         gphoto_line = gphoto.get("lastError") or "gphoto2 no disponible"
@@ -71,9 +122,6 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
     <form method="post" action="/api/gphoto/capture" style="margin-top:1rem">
       <button type="submit" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">Disparar por USB</button>
     </form>"""
-    elif gphoto_enabled and gphoto.get("running"):
-        capture_btn = """
-    <p style="margin-top:1rem;font-size:.88rem;color:#94a3b8">Modo tethered: dispara en la cámara y la foto se sube sola.</p>"""
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -83,40 +131,15 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
   <title>FotoGlow Gateway</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{
-      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-      margin: 0; padding: 1.25rem;
-      background: #0f172a; color: #e2e8f0;
-      min-height: 100vh;
-    }}
-    .card {{
-      max-width: 28rem; margin: 0 auto;
-      background: #1e293b; border-radius: 1rem;
-      padding: 1.25rem 1.5rem 1.5rem;
-      box-shadow: 0 8px 32px rgba(0,0,0,.35);
-    }}
+    body {{ font-family: system-ui, sans-serif; margin: 0; padding: 1.25rem; background: #0f172a; color: #e2e8f0; min-height: 100vh; }}
+    .card {{ max-width: 28rem; margin: 0 auto; background: #1e293b; border-radius: 1rem; padding: 1.25rem 1.5rem; }}
     h1 {{ font-size: 1.35rem; margin: 0 0 .25rem; color: #f8fafc; }}
-    .sub {{ color: #94a3b8; font-size: .9rem; margin-bottom: 1.25rem; }}
-    label {{ display: block; font-size: .85rem; color: #cbd5e1; margin-bottom: .35rem; }}
-    input {{
-      width: 100%; font-size: 1.25rem; padding: .75rem 1rem;
-      border-radius: .65rem; border: 1px solid #334155;
-      background: #0f172a; color: #f8fafc;
-    }}
-    button {{
-      width: 100%; margin-top: 1rem; padding: .9rem;
-      font-size: 1.05rem; font-weight: 600;
-      border: none; border-radius: .65rem;
-      background: linear-gradient(135deg, #0ea5e9, #0284c7);
-      color: white; cursor: pointer;
-    }}
-    button:active {{ opacity: .9; }}
-    .stats {{
-      margin-top: 1.25rem; padding-top: 1rem;
-      border-top: 1px solid #334155;
-      font-size: .88rem; color: #94a3b8; line-height: 1.6;
-    }}
-    .stats strong {{ color: #e2e8f0; }}
+    .sub {{ color: #94a3b8; font-size: .9rem; margin-bottom: 1rem; }}
+    .id-box {{ background: #0f172a; border: 1px solid #334155; border-radius: .65rem; padding: .75rem 1rem; margin-bottom: 1rem; word-break: break-all; font-family: monospace; font-size: 1.1rem; color: #38bdf8; }}
+    label {{ display: block; font-size: .85rem; color: #cbd5e1; margin-bottom: .35rem; margin-top: .75rem; }}
+    input {{ width: 100%; font-size: 1rem; padding: .75rem 1rem; border-radius: .65rem; border: 1px solid #334155; background: #0f172a; color: #f8fafc; }}
+    button {{ width: 100%; margin-top: 1rem; padding: .9rem; font-size: 1.05rem; font-weight: 600; border: none; border-radius: .65rem; background: linear-gradient(135deg, #0ea5e9, #0284c7); color: white; }}
+    .stats {{ margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #334155; font-size: .88rem; color: #94a3b8; line-height: 1.6; }}
     .ok {{ color: #4ade80; font-weight: 600; }}
     .warn {{ color: #fbbf24; }}
     .msg {{ margin-top: 1rem; padding: .75rem 1rem; border-radius: .5rem; background: #14532d; color: #bbf7d0; }}
@@ -126,24 +149,24 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict) -> str:
 <body>
   <div class="card">
     <h1>FotoGlow Gateway</h1>
-    <p class="sub">Raspberry sin pantalla — configura el evento desde el celular</p>
+    <p class="sub">ID único de esta Raspberry — el administrador lo asigna a un cliente</p>
+    <div class="id-box">{id_rpi}</div>
 
     <form method="post" action="/">
-      <label for="eventoId">ID del evento activo en la cabina</label>
-      <input id="eventoId" name="eventoId" type="number" min="1" step="1"
-             placeholder="Ej. 42" value="{evento if evento else ''}" required autocomplete="off" />
-      <button type="submit">Guardar evento</button>
+      <label for="uploadToken">Token del evento (desde Panel → Galerías)</label>
+      <input id="uploadToken" name="uploadToken" type="text" value="{upload_token}" required autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <label for="eventoId">ID evento cabina (opcional, debe coincidir)</label>
+      <input id="eventoId" name="eventoId" type="number" min="1" step="1" value="{evento if evento else ''}" placeholder="Ej. 42" />
+      <button type="submit">Guardar evento del día</button>
     </form>
 
     <div class="stats">
-      <div>Evento actual: <strong class="{'ok' if evento else 'warn'}">{evento_label}</strong></div>
-      <div>IP de esta Pi: <strong>{ip}</strong></div>
-      <div>Puerto panel: <strong>{admin_port}</strong></div>
-      <div>Fotos en cola: <strong>{pending}</strong></div>
-      <div>Último cambio: <strong>{updated}</strong></div>
-      <div>Última subida: <strong>{last_line}</strong></div>
-      <div>FTP cámara: <strong class="{ftp_class}">{ftp_line}</strong></div>
-      <div>USB gphoto2: <strong class="{gphoto_class}">{gphoto_line}</strong></div>
+      <div>Cliente: <strong class="{assign_class}">{assign_line}</strong></div>
+      <div>Evento activo: <strong class="{bind_class}">{bind_label}</strong></div>
+      <div>IP Pi: <strong>{ip}</strong> · Panel: <strong>{admin_port}</strong></div>
+      <div>Cola: <strong>{pending}</strong> · Última subida: <strong>{last_line}</strong></div>
+      <div>FTP: <strong class="{ftp_class}">{ftp_line}</strong></div>
+      <div>USB: <strong class="{gphoto_class}">{gphoto_line}</strong></div>
     </div>
     {capture_btn}
   </div>
@@ -155,9 +178,13 @@ class AdminHandler(BaseHTTPRequestHandler):
     incoming_dir: Path
     admin_port: int = 8080
     admin_pin: str = ""
+    remote_upload_url: str = ""
 
     def log_message(self, fmt: str, *args) -> None:
         log.debug("HTTP " + fmt, *args)
+
+    def _device(self) -> dict[str, str]:
+        return get_device_credentials()
 
     def _check_pin(self, pin: str) -> bool:
         if not self.admin_pin:
@@ -172,7 +199,7 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _parse_body_evento(self) -> tuple[int | None, str | None, str]:
+    def _parse_event_form(self) -> tuple[str | None, int | None, str | None, str]:
         ctype = (self.headers.get("Content-Type") or "").lower()
         pin = ""
         if "application/json" in ctype:
@@ -180,27 +207,48 @@ class AdminHandler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length else b"{}"
             data = json.loads(raw.decode("utf-8") or "{}")
             pin = str(data.get("pin") or "")
-            try:
-                return int(data["eventoId"]), None, pin
-            except (KeyError, TypeError, ValueError):
-                return None, "eventoId inválido", pin
+            token = _normalize_token(data.get("uploadToken") or data.get("token") or "")
+            evento_raw = data.get("eventoId")
+        else:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length else ""
+            fields = parse_qs(raw)
+            pin = (fields.get("pin") or [""])[0]
+            token = _normalize_token((fields.get("uploadToken") or fields.get("token") or [""])[0])
+            evento_raw = (fields.get("eventoId") or [""])[0].strip()
 
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length).decode("utf-8") if length else ""
-        fields = parse_qs(raw)
-        pin = (fields.get("pin") or [""])[0]
-        raw_id = (fields.get("eventoId") or [""])[0].strip()
+        if not token:
+            return None, None, "Token de galería requerido", pin
+
+        evento_id = None
+        if evento_raw not in (None, ""):
+            try:
+                evento_id = int(evento_raw)
+                if evento_id <= 0:
+                    return None, None, "ID evento inválido", pin
+            except (TypeError, ValueError):
+                return None, None, "ID evento inválido", pin
+
+        return token, evento_id, None, pin
+
+    def _page_context(self) -> tuple[dict, dict]:
+        lan = local_ipv4()
+        device = self._device()
+        status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan, device=device)
+        cloud = {}
         try:
-            return int(raw_id), None, pin
-        except ValueError:
-            return None, "eventoId inválido", pin
+            cloud = _fetch_raspberry_status(self.remote_upload_url, device["idRaspberry"])
+        except requests.RequestException:
+            cloud = {"registered": False, "assigned": False}
+        return status, cloud
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         lan = local_ipv4()
+        device = self._device()
 
         if path == "/api/status":
-            st = get_status(incoming_dir=self.incoming_dir, lan_ip=lan)
+            st = get_status(incoming_dir=self.incoming_dir, lan_ip=lan, device=device)
             st["gphoto"] = get_gphoto_status()
             self._send_json(200, {"ok": True, **st})
             return
@@ -213,8 +261,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
 
-        status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan)
-        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status)
+        status, cloud = self._page_context()
+        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status, cloud=cloud)
         body = html.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -235,7 +283,7 @@ class AdminHandler(BaseHTTPRequestHandler):
                     data = json.loads(raw.decode("utf-8") or "{}")
                     pin = str(data.get("pin") or "")
                 except json.JSONDecodeError:
-                    data = {}
+                    pass
             else:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length).decode("utf-8") if length else ""
@@ -245,7 +293,6 @@ class AdminHandler(BaseHTTPRequestHandler):
             if not self._check_pin(pin):
                 self._send_json(401, {"ok": False, "message": "PIN incorrecto"})
                 return
-
             try:
                 result = trigger_capture()
                 self._send_json(200, {"ok": True, **result})
@@ -253,69 +300,69 @@ class AdminHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"ok": False, "message": str(exc)})
             return
 
-        if path not in ("/", "/api/evento"):
+        if path not in ("/", "/api/evento", "/api/galeria"):
             self.send_error(404)
             return
 
-        evento_id, err, pin = self._parse_body_evento()
+        token, evento_id, err, pin = self._parse_event_form()
         if not self._check_pin(pin):
-            if path == "/api/evento":
-                self._send_json(401, {"ok": False, "message": "PIN incorrecto"})
-            else:
-                self._send_html_error("PIN incorrecto")
+            self._send_html_error("PIN incorrecto")
+            return
+        if err or not token:
+            self._send_html_error(err or "Token requerido")
             return
 
-        if err or evento_id is None or evento_id <= 0:
-            if path == "/api/evento":
-                self._send_json(400, {"ok": False, "message": err or "eventoId requerido"})
-            else:
-                self._send_html_error(err or "eventoId requerido")
-            return
-
+        device = self._device()
         try:
-            saved = set_evento_id(evento_id)
-        except ValueError as exc:
-            if path == "/api/evento":
-                self._send_json(400, {"ok": False, "message": str(exc)})
-            else:
-                self._send_html_error(str(exc))
+            cloud = _fetch_raspberry_status(self.remote_upload_url, device["idRaspberry"])
+            if not cloud.get("assigned"):
+                raise ValueError("Raspberry sin cliente asignado. Contacta al administrador con tu ID.")
+            meta = _validate_upload_token(self.remote_upload_url, token)
+            if evento_id is not None and meta.get("eventoIdCabina"):
+                if str(meta.get("eventoIdCabina")) != str(evento_id):
+                    raise ValueError("El ID evento no coincide con la galería")
+            evento_final = evento_id
+            if evento_final is None and meta.get("eventoIdCabina"):
+                try:
+                    evento_final = int(meta.get("eventoIdCabina"))
+                except (TypeError, ValueError):
+                    evento_final = None
+            saved = set_event_binding(
+                token,
+                evento_id=evento_final,
+                galeria_titulo=meta.get("titulo"),
+            )
+        except (ValueError, requests.RequestException) as exc:
+            self._send_html_error(str(exc))
             return
 
-        log.info("Evento establecido desde panel web: %s", evento_id)
-
-        if path == "/api/evento":
-            self._send_json(200, {"ok": True, **saved})
+        log.info("Evento configurado: %s", meta.get("titulo"))
+        if path in ("/api/evento", "/api/galeria"):
+            self._send_json(200, {"ok": True, "titulo": meta.get("titulo"), **saved})
             return
 
-        self._redirect_with_ok(evento_id)
-
-    def _send_html_error(self, message: str) -> None:
         lan = local_ipv4()
-        status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan)
-        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status)
+        status, cloud = self._page_context()
+        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status, cloud=cloud)
         html = html.replace(
             "</form>",
-            f'<div class="msg err">{message}</div></form>',
+            f'<div class="msg">Evento <strong>{meta.get("titulo")}</strong> listo.</div></form>',
             1,
         )
         body = html.encode("utf-8")
-        self.send_response(400)
+        self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _redirect_with_ok(self, evento_id: int) -> None:
+    def _send_html_error(self, message: str) -> None:
         lan = local_ipv4()
-        status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan)
-        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status)
-        html = html.replace(
-            "</form>",
-            f'<div class="msg">Evento <strong>{evento_id}</strong> guardado. Las fotos en cola se subirán solas.</div></form>',
-            1,
-        )
+        status, cloud = self._page_context()
+        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status, cloud=cloud)
+        html = html.replace("</form>", f'<div class="msg err">{message}</div></form>', 1)
         body = html.encode("utf-8")
-        self.send_response(200)
+        self.send_response(400)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -328,6 +375,7 @@ def start_web_admin(
     port: int,
     incoming_dir: Path,
     admin_pin: str = "",
+    remote_upload_url: str = "",
 ) -> threading.Thread:
     handler = type(
         "BoundAdminHandler",
@@ -336,14 +384,14 @@ def start_web_admin(
             "incoming_dir": incoming_dir,
             "admin_port": port,
             "admin_pin": (admin_pin or "").strip(),
+            "remote_upload_url": (remote_upload_url or "").strip(),
         },
     )
-
     server = ThreadingHTTPServer((host, port), handler)
 
     def _run() -> None:
         lan = local_ipv4()
-        log.info("Panel web en http://%s:%s (celular en el hotspot)", lan or host, port)
+        log.info("Panel web en http://%s:%s", lan or host, port)
         server.serve_forever()
 
     thread = threading.Thread(target=_run, name="web-admin", daemon=True)

@@ -8,7 +8,9 @@ import sys
 from .config import load_config
 from .ftp_server import set_ftp_disabled, start_ftp_server
 from .gphoto_capture import start_gphoto
-from .state import get_evento_id, load_state, save_state
+from .state import load_state
+from .register import register_with_hosting
+from .device import get_device_credentials
 from .uploader import run_uploader_loop
 from .web_admin import start_web_admin
 
@@ -43,12 +45,12 @@ def main() -> None:
     else:
         logging.getLogger("gateway").info("FTP deshabilitado en config (solo USB)")
         set_ftp_disabled()
-    if get_evento_id() is None and cfg.get("eventoIdFallback"):
-        save_state(cfg["eventoIdFallback"], updated_by="config")
+    if cfg.get("eventoIdFallback"):
         logging.getLogger("gateway").info(
-            "Evento inicial %s desde config.json (cámbialo en el panel web)",
-            cfg["eventoIdFallback"],
+            "eventoIdFallback en config ignorado — usa token de galería en el panel",
         )
+
+    register_with_hosting(cfg.get("remoteUploadUrl") or "")
 
     admin = cfg["admin"]
     start_web_admin(
@@ -56,17 +58,23 @@ def main() -> None:
         port=admin["port"],
         incoming_dir=cfg["incomingDir"],
         admin_pin=admin.get("pin") or "",
+        remote_upload_url=cfg.get("remoteUploadUrl") or "",
     )
 
     # USB vía gphoto2 (opcional; convive con FTP en la misma carpeta incoming/)
     start_gphoto(cfg, cfg["incomingDir"])
 
+    device = get_device_credentials()
     state = load_state()
-    if state.get("eventoId"):
-        logging.getLogger("gateway").info("Evento activo en gateway: %s", state["eventoId"])
+    logging.getLogger("gateway").info("ID Raspberry: %s", device["idRaspberry"])
+    if state.get("uploadToken"):
+        logging.getLogger("gateway").info(
+            "Evento activo: %s",
+            state.get("galeriaTitulo") or state.get("uploadToken"),
+        )
     else:
         logging.getLogger("gateway").warning(
-            "Sin eventoId — conecta el celular al hotspot y abre http://IP-PI:%s",
+            "Sin evento configurado — abre http://IP-PI:%s y pega el token de galería",
             admin["port"],
         )
 

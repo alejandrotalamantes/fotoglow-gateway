@@ -1,8 +1,9 @@
-"""Estado en tiempo de ejecución (eventoId desde el panel web del celular)."""
+"""Estado operativo del evento del día (token galería + eventoId)."""
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,13 +13,19 @@ from .config import ROOT
 
 STATE_FILE = ROOT / "data" / "state.json"
 _lock = threading.Lock()
-
 _last_upload: dict[str, Any] = {}
+
+
+def _normalize_upload_token(raw: str | None) -> str | None:
+    token = re.sub(r"[^a-zA-Z0-9_-]", "", str(raw or "").strip())[:64]
+    return token or None
 
 
 def _default_state() -> dict[str, Any]:
     return {
         "eventoId": None,
+        "uploadToken": None,
+        "galeriaTitulo": None,
         "updatedAt": None,
         "updatedBy": None,
     }
@@ -33,6 +40,8 @@ def load_state() -> dict[str, Any]:
         evento = raw.get("eventoId")
         return {
             "eventoId": int(evento) if evento is not None else None,
+            "uploadToken": _normalize_upload_token(raw.get("uploadToken")),
+            "galeriaTitulo": raw.get("galeriaTitulo"),
             "updatedAt": raw.get("updatedAt"),
             "updatedBy": raw.get("updatedBy"),
         }
@@ -40,9 +49,20 @@ def load_state() -> dict[str, Any]:
         return _default_state()
 
 
-def save_state(evento_id: int, *, updated_by: str = "web") -> dict[str, Any]:
+def save_event_binding(
+    upload_token: str,
+    *,
+    evento_id: int | None = None,
+    galeria_titulo: str | None = None,
+    updated_by: str = "web",
+) -> dict[str, Any]:
+    token = _normalize_upload_token(upload_token)
+    if not token:
+        raise ValueError("Token de galería inválido")
     payload = {
-        "eventoId": int(evento_id),
+        "eventoId": int(evento_id) if evento_id is not None else None,
+        "uploadToken": token,
+        "galeriaTitulo": (galeria_titulo or "").strip() or None,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "updatedBy": updated_by,
     }
@@ -54,8 +74,7 @@ def save_state(evento_id: int, *, updated_by: str = "web") -> dict[str, Any]:
 
 
 def get_evento_id() -> int | None:
-    with _lock:
-        eid = load_state().get("eventoId")
+    eid = load_state().get("eventoId")
     if eid is None:
         return None
     try:
@@ -65,14 +84,26 @@ def get_evento_id() -> int | None:
         return None
 
 
-def set_evento_id(evento_id: int, *, updated_by: str = "web") -> dict[str, Any]:
-    n = int(evento_id)
-    if n <= 0:
-        raise ValueError("eventoId debe ser un entero positivo")
-    return save_state(n, updated_by=updated_by)
+def get_upload_token() -> str | None:
+    return _normalize_upload_token(load_state().get("uploadToken"))
 
 
-def record_upload(*, filename: str, evento_id: int, remote_url: str) -> None:
+def set_event_binding(
+    upload_token: str,
+    *,
+    evento_id: int | None = None,
+    galeria_titulo: str | None = None,
+    updated_by: str = "web",
+) -> dict[str, Any]:
+    return save_event_binding(
+        upload_token,
+        evento_id=evento_id,
+        galeria_titulo=galeria_titulo,
+        updated_by=updated_by,
+    )
+
+
+def record_upload(*, filename: str, remote_url: str, evento_id: int | None = None) -> None:
     with _lock:
         _last_upload.clear()
         _last_upload.update(
@@ -85,7 +116,7 @@ def record_upload(*, filename: str, evento_id: int, remote_url: str) -> None:
         )
 
 
-def get_status(*, incoming_dir: Path, lan_ip: str | None) -> dict[str, Any]:
+def get_status(*, incoming_dir: Path, lan_ip: str | None, device: dict[str, str]) -> dict[str, Any]:
     from .ftp_server import get_ftp_status
     from .gphoto_capture import get_gphoto_status
 
@@ -98,7 +129,10 @@ def get_status(*, incoming_dir: Path, lan_ip: str | None) -> dict[str, Any]:
         last = dict(_last_upload)
 
     return {
+        "idRaspberry": device.get("idRaspberry"),
         "eventoId": state.get("eventoId"),
+        "uploadToken": state.get("uploadToken"),
+        "galeriaTitulo": state.get("galeriaTitulo"),
         "updatedAt": state.get("updatedAt"),
         "lanIp": lan_ip,
         "pendingFiles": pending,
