@@ -108,13 +108,19 @@ def run_uploader_loop(cfg: dict) -> None:
             dir_key = _storage_dir_key(upload_token)
             pending = _walk_files(incoming)
 
-            if not upload_token and pending:
+            if pending and (not upload_token or evento_id is None):
                 now = time.monotonic()
                 if now - last_no_config_log > 30:
-                    log.warning(
-                        "Hay %s foto(s) en cola pero falta token de galería — configura el evento en el panel",
-                        len(pending),
-                    )
+                    if not upload_token:
+                        log.warning(
+                            "Hay %s foto(s) en cola pero falta token del cliente — asigna la Pi en FotoGlow",
+                            len(pending),
+                        )
+                    else:
+                        log.warning(
+                            "Hay %s foto(s) en cola pero falta ID evento — configúralo en el panel",
+                            len(pending),
+                        )
                     last_no_config_log = now
 
             for file_path in pending:
@@ -133,7 +139,7 @@ def run_uploader_loop(cfg: dict) -> None:
                 if not is_image(file_path):
                     continue
 
-                if not upload_token:
+                if not upload_token or evento_id is None:
                     continue
 
                 now = time.monotonic()

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 
 from .device import get_device_credentials
+from .state import save_upload_token
 
 log = logging.getLogger("gateway.register")
 
@@ -37,5 +38,7 @@ def register_with_hosting(remote_upload_url: str) -> None:
             return
         assigned = "asignada" if data.get("assigned") else "pendiente de asignar"
         log.info("Raspberry %s registrada (%s)", device["idRaspberry"], assigned)
+        if data.get("uploadToken"):
+            save_upload_token(str(data["uploadToken"]), updated_by="register")
     except requests.RequestException as exc:
         log.warning("No se pudo registrar en FotoGlow: %s", exc)

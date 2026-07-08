@@ -1,4 +1,4 @@
-"""Estado operativo del evento del día (token galería + eventoId)."""
+"""Estado operativo: token del cliente (sincronizado) + evento del día."""
 
 from __future__ import annotations
 
@@ -49,28 +49,47 @@ def load_state() -> dict[str, Any]:
         return _default_state()
 
 
-def save_event_binding(
-    upload_token: str,
-    *,
-    evento_id: int | None = None,
-    galeria_titulo: str | None = None,
-    updated_by: str = "web",
-) -> dict[str, Any]:
-    token = _normalize_upload_token(upload_token)
-    if not token:
-        raise ValueError("Token de galería inválido")
-    payload = {
-        "eventoId": int(evento_id) if evento_id is not None else None,
-        "uploadToken": token,
-        "galeriaTitulo": (galeria_titulo or "").strip() or None,
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
-        "updatedBy": updated_by,
-    }
+def _write_state(payload: dict[str, Any]) -> dict[str, Any]:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         with STATE_FILE.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
     return payload
+
+
+def save_upload_token(upload_token: str, *, updated_by: str = "sync") -> dict[str, Any]:
+    token = _normalize_upload_token(upload_token)
+    if not token:
+        raise ValueError("Token de cliente inválido")
+    state = load_state()
+    payload = {
+        **state,
+        "uploadToken": token,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedBy": updated_by,
+    }
+    return _write_state(payload)
+
+
+def set_daily_event(
+    evento_id: int,
+    *,
+    galeria_titulo: str | None = None,
+    updated_by: str = "web",
+) -> dict[str, Any]:
+    if evento_id <= 0:
+        raise ValueError("ID evento inválido")
+    state = load_state()
+    if not state.get("uploadToken"):
+        raise ValueError("Falta token del cliente — espera asignación o sincroniza la Pi")
+    payload = {
+        **state,
+        "eventoId": int(evento_id),
+        "galeriaTitulo": (galeria_titulo or "").strip() or None,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedBy": updated_by,
+    }
+    return _write_state(payload)
 
 
 def get_evento_id() -> int | None:
@@ -95,12 +114,11 @@ def set_event_binding(
     galeria_titulo: str | None = None,
     updated_by: str = "web",
 ) -> dict[str, Any]:
-    return save_event_binding(
-        upload_token,
-        evento_id=evento_id,
-        galeria_titulo=galeria_titulo,
-        updated_by=updated_by,
-    )
+    """Compatibilidad: guarda token y opcionalmente evento."""
+    save_upload_token(upload_token, updated_by=updated_by)
+    if evento_id is not None:
+        return set_daily_event(evento_id, galeria_titulo=galeria_titulo, updated_by=updated_by)
+    return load_state()
 
 
 def record_upload(*, filename: str, remote_url: str, evento_id: int | None = None) -> None:

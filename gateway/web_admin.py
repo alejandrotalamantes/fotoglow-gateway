@@ -15,7 +15,8 @@ import requests
 
 from .device import get_device_credentials
 from .gphoto_capture import get_gphoto_status, trigger_capture
-from .state import get_status, set_event_binding
+from .state import get_status, get_upload_token, set_daily_event
+from .sync import sync_client_token
 
 log = logging.getLogger("gateway.web")
 
@@ -55,13 +56,16 @@ def _fetch_raspberry_status(remote_upload_url: str, id_raspberry: str) -> dict:
     }
 
 
-def _validate_upload_token(remote_upload_url: str, token: str) -> dict:
+def _validate_evento(remote_upload_url: str, token: str, evento_id: int) -> dict:
     origin = _origin_from_upload_url(remote_upload_url)
-    url = f"{origin}/api/public/galerias/upload-validate?token={quote(token)}"
+    url = (
+        f"{origin}/api/public/subida/validate"
+        f"?token={quote(token)}&evento={quote(str(evento_id))}"
+    )
     res = requests.get(url, timeout=20)
     data = res.json() if res.content else {}
     if res.status_code >= 400 or not data.get("ok"):
-        raise ValueError(data.get("message") or "Token de galería no válido")
+        raise ValueError(data.get("message") or "ID evento no válido para este cliente")
     return data
 
 
@@ -86,8 +90,11 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict, cloud: dict
         assign_line = "Sin conexión al hosting"
         assign_class = "warn"
 
-    bind_class = "ok" if upload_token else "warn"
-    bind_label = galeria_titulo if upload_token else "Evento no configurado"
+    token_ok = "ok" if upload_token else "warn"
+    token_line = "Sincronizado" if upload_token else "Pendiente — asigna la Pi al cliente"
+
+    bind_class = "ok" if evento and galeria_titulo else "warn"
+    bind_label = galeria_titulo if evento else "Sin evento del día"
 
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
@@ -153,15 +160,14 @@ def _html_page(*, lan_ip: str | None, admin_port: int, status: dict, cloud: dict
     <div class="id-box">{id_rpi}</div>
 
     <form method="post" action="/">
-      <label for="uploadToken">Token del evento (desde Panel → Galerías)</label>
-      <input id="uploadToken" name="uploadToken" type="text" value="{upload_token}" required autocomplete="off" autocapitalize="off" spellcheck="false" />
-      <label for="eventoId">ID evento cabina (opcional, debe coincidir)</label>
-      <input id="eventoId" name="eventoId" type="number" min="1" step="1" value="{evento if evento else ''}" placeholder="Ej. 42" />
-      <button type="submit">Guardar evento del día</button>
+      <label for="eventoId">ID evento cabina (del día)</label>
+      <input id="eventoId" name="eventoId" type="number" min="1" step="1" value="{evento if evento else ''}" placeholder="Ej. 42" required />
+      <button type="submit">Activar evento del día</button>
     </form>
 
     <div class="stats">
       <div>Cliente: <strong class="{assign_class}">{assign_line}</strong></div>
+      <div>Token cliente: <strong class="{token_ok}">{token_line}</strong></div>
       <div>Evento activo: <strong class="{bind_class}">{bind_label}</strong></div>
       <div>IP Pi: <strong>{ip}</strong> · Panel: <strong>{admin_port}</strong></div>
       <div>Cola: <strong>{pending}</strong> · Última subida: <strong>{last_line}</strong></div>
@@ -199,7 +205,7 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _parse_event_form(self) -> tuple[str | None, int | None, str | None, str]:
+    def _parse_event_form(self) -> tuple[int | None, str | None, str]:
         ctype = (self.headers.get("Content-Type") or "").lower()
         pin = ""
         if "application/json" in ctype:
@@ -207,31 +213,26 @@ class AdminHandler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length else b"{}"
             data = json.loads(raw.decode("utf-8") or "{}")
             pin = str(data.get("pin") or "")
-            token = _normalize_token(data.get("uploadToken") or data.get("token") or "")
-            evento_raw = data.get("eventoId")
+            evento_raw = data.get("eventoId") or data.get("evento")
         else:
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8") if length else ""
             fields = parse_qs(raw)
             pin = (fields.get("pin") or [""])[0]
-            token = _normalize_token((fields.get("uploadToken") or fields.get("token") or [""])[0])
-            evento_raw = (fields.get("eventoId") or [""])[0].strip()
+            evento_raw = (fields.get("eventoId") or fields.get("evento") or [""])[0].strip()
 
-        if not token:
-            return None, None, "Token de galería requerido", pin
-
-        evento_id = None
-        if evento_raw not in (None, ""):
-            try:
-                evento_id = int(evento_raw)
-                if evento_id <= 0:
-                    return None, None, "ID evento inválido", pin
-            except (TypeError, ValueError):
-                return None, None, "ID evento inválido", pin
-
-        return token, evento_id, None, pin
+        if evento_raw in (None, ""):
+            return None, "ID evento requerido", pin
+        try:
+            evento_id = int(evento_raw)
+            if evento_id <= 0:
+                return None, "ID evento inválido", pin
+        except (TypeError, ValueError):
+            return None, "ID evento inválido", pin
+        return evento_id, None, pin
 
     def _page_context(self) -> tuple[dict, dict]:
+        sync_client_token(self.remote_upload_url)
         lan = local_ipv4()
         device = self._device()
         status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan, device=device)
@@ -304,34 +305,24 @@ class AdminHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
 
-        token, evento_id, err, pin = self._parse_event_form()
+        evento_id, err, pin = self._parse_event_form()
         if not self._check_pin(pin):
             self._send_html_error("PIN incorrecto")
             return
-        if err or not token:
-            self._send_html_error(err or "Token requerido")
+        if err or evento_id is None:
+            self._send_html_error(err or "ID evento requerido")
             return
 
-        device = self._device()
         try:
-            cloud = _fetch_raspberry_status(self.remote_upload_url, device["idRaspberry"])
+            cloud = _fetch_raspberry_status(self.remote_upload_url, self._device()["idRaspberry"])
             if not cloud.get("assigned"):
                 raise ValueError("Raspberry sin cliente asignado. Contacta al administrador con tu ID.")
-            meta = _validate_upload_token(self.remote_upload_url, token)
-            if evento_id is not None and meta.get("eventoIdCabina"):
-                if str(meta.get("eventoIdCabina")) != str(evento_id):
-                    raise ValueError("El ID evento no coincide con la galería")
-            evento_final = evento_id
-            if evento_final is None and meta.get("eventoIdCabina"):
-                try:
-                    evento_final = int(meta.get("eventoIdCabina"))
-                except (TypeError, ValueError):
-                    evento_final = None
-            saved = set_event_binding(
-                token,
-                evento_id=evento_final,
-                galeria_titulo=meta.get("titulo"),
-            )
+            sync_client_token(self.remote_upload_url)
+            token = get_upload_token()
+            if not token:
+                raise ValueError("Token del cliente no disponible. Espera unos segundos o reinicia la Pi.")
+            meta = _validate_evento(self.remote_upload_url, token, evento_id)
+            saved = set_daily_event(evento_id, galeria_titulo=meta.get("titulo"))
         except (ValueError, requests.RequestException) as exc:
             self._send_html_error(str(exc))
             return

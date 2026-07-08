@@ -10,6 +10,7 @@ from .ftp_server import set_ftp_disabled, start_ftp_server
 from .gphoto_capture import start_gphoto
 from .state import load_state
 from .register import register_with_hosting
+from .sync import sync_client_token
 from .device import get_device_credentials
 from .uploader import run_uploader_loop
 from .web_admin import start_web_admin
@@ -51,6 +52,7 @@ def main() -> None:
         )
 
     register_with_hosting(cfg.get("remoteUploadUrl") or "")
+    sync_client_token(cfg.get("remoteUploadUrl") or "")
 
     admin = cfg["admin"]
     start_web_admin(
