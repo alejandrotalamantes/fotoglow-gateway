@@ -134,7 +134,13 @@ def record_upload(*, filename: str, remote_url: str, evento_id: int | None = Non
         )
 
 
-def get_status(*, incoming_dir: Path, lan_ip: str | None, device: dict[str, str]) -> dict[str, Any]:
+def get_status(
+    *,
+    incoming_dir: Path,
+    lan_ip: str | None,
+    device: dict[str, str],
+    processed_root: Path | None = None,
+) -> dict[str, Any]:
     from .ftp_server import get_ftp_status
     from .gphoto_capture import get_gphoto_status
 
@@ -142,6 +148,13 @@ def get_status(*, incoming_dir: Path, lan_ip: str | None, device: dict[str, str]
     pending = 0
     if incoming_dir.is_dir():
         pending = sum(1 for p in incoming_dir.rglob("*") if p.is_file())
+
+    uploaded = 0
+    token = _normalize_upload_token(state.get("uploadToken"))
+    if processed_root is not None and token:
+        processed_dir = processed_root / f"token_{token[:16]}"
+        if processed_dir.is_dir():
+            uploaded = sum(1 for p in processed_dir.rglob("*") if p.is_file())
 
     with _lock:
         last = dict(_last_upload)
@@ -154,6 +167,7 @@ def get_status(*, incoming_dir: Path, lan_ip: str | None, device: dict[str, str]
         "updatedAt": state.get("updatedAt"),
         "lanIp": lan_ip,
         "pendingFiles": pending,
+        "uploadedFiles": uploaded,
         "lastUpload": last or None,
         "ftp": get_ftp_status(),
         "gphoto": get_gphoto_status(),

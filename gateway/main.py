@@ -59,6 +59,7 @@ def main() -> None:
         host=admin["host"],
         port=admin["port"],
         incoming_dir=cfg["incomingDir"],
+        processed_root=cfg["processedRoot"],
         admin_pin=admin.get("pin") or "",
         remote_upload_url=cfg.get("remoteUploadUrl") or "",
     )

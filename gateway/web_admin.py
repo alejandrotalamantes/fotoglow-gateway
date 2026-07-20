@@ -89,6 +89,7 @@ def _html_page(
     galeria_titulo = status.get("galeriaTitulo") or ""
     evento = status.get("eventoId")
     pending = int(status.get("pendingFiles") or 0)
+    uploaded = int(status.get("uploadedFiles") or 0)
     last = status.get("lastUpload") or {}
     last_line = last.get("filename") or "—"
 
@@ -108,6 +109,7 @@ def _html_page(
     event_ready = bool(evento)
     event_title = galeria_titulo if galeria_titulo else (f"Evento {evento}" if evento else "Sin evento")
     event_sub = f"ID {evento}" if evento else "Configura el ID del día"
+    event_sub = f"{event_sub} · cola {pending} · ok {uploaded}"
 
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
@@ -125,7 +127,9 @@ def _html_page(
         usb_dot, usb_line = "warn", "USB?"
 
     queue_dot = "warn" if pending else "on"
-    queue_line = f"Cola {pending}" if pending else "Cola 0"
+    queue_line = f"Cola {pending}"
+    uploaded_dot = "on" if uploaded else "off"
+    uploaded_line = f"OK {uploaded}"
 
     capture_btn = ""
     if gphoto_enabled and gphoto.get("available") and (gphoto.get("mode") or "").lower() == "manual":
@@ -408,7 +412,7 @@ def _html_page(
     <div class="chip"><span class="d {usb_dot}"></span><strong>{_esc(usb_line)}</strong></div>
     <div class="chip"><span class="d {ftp_dot}"></span><strong>{_esc(ftp_line)}</strong></div>
     <div class="chip"><span class="d {queue_dot}"></span><strong>{_esc(queue_line)}</strong></div>
-    <div class="chip"><span class="d on"></span><strong>{_esc(ip)}</strong></div>
+    <div class="chip"><span class="d {uploaded_dot}"></span><strong>{_esc(uploaded_line)}</strong></div>
   </div>
 
   <form method="post" action="/" class="event">
@@ -426,6 +430,7 @@ def _html_page(
 
 class AdminHandler(BaseHTTPRequestHandler):
     incoming_dir: Path
+    processed_root: Path | None = None
     admin_port: int = 8080
     admin_pin: str = ""
     remote_upload_url: str = ""
@@ -435,6 +440,15 @@ class AdminHandler(BaseHTTPRequestHandler):
 
     def _device(self) -> dict[str, str]:
         return get_device_credentials()
+
+    def _status(self, *, lan_ip: str | None = None) -> dict:
+        lan = lan_ip if lan_ip is not None else local_ipv4()
+        return get_status(
+            incoming_dir=self.incoming_dir,
+            lan_ip=lan,
+            device=self._device(),
+            processed_root=self.processed_root,
+        )
 
     def _check_pin(self, pin: str) -> bool:
         if not self.admin_pin:
@@ -479,7 +493,7 @@ class AdminHandler(BaseHTTPRequestHandler):
         sync_client_token(self.remote_upload_url)
         lan = local_ipv4()
         device = self._device()
-        status = get_status(incoming_dir=self.incoming_dir, lan_ip=lan, device=device)
+        status = self._status(lan_ip=lan)
         cloud = {}
         try:
             cloud = _fetch_raspberry_status(self.remote_upload_url, device["idRaspberry"])
@@ -490,10 +504,9 @@ class AdminHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         lan = local_ipv4()
-        device = self._device()
 
         if path == "/api/status":
-            st = get_status(incoming_dir=self.incoming_dir, lan_ip=lan, device=device)
+            st = self._status(lan_ip=lan)
             st["gphoto"] = get_gphoto_status()
             self._send_json(200, {"ok": True, **st})
             return
@@ -617,6 +630,7 @@ def start_web_admin(
     host: str,
     port: int,
     incoming_dir: Path,
+    processed_root: Path | None = None,
     admin_pin: str = "",
     remote_upload_url: str = "",
 ) -> threading.Thread:
@@ -625,6 +639,7 @@ def start_web_admin(
         (AdminHandler,),
         {
             "incoming_dir": incoming_dir,
+            "processed_root": processed_root,
             "admin_port": port,
             "admin_pin": (admin_pin or "").strip(),
             "remote_upload_url": (remote_upload_url or "").strip(),
