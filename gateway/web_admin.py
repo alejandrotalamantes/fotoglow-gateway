@@ -1,4 +1,4 @@
-"""Panel web móvil: muestra idRaspberry y configura el evento del día."""
+"""Panel hub kiosko: estado del evento, cola y fotos enviadas."""
 
 from __future__ import annotations
 
@@ -83,7 +83,6 @@ def _html_page(
     flash: str | None = None,
     flash_err: bool = False,
 ) -> str:
-    ip = lan_ip or "—"
     id_rpi = status.get("idRaspberry") or "—"
     upload_token = status.get("uploadToken") or ""
     galeria_titulo = status.get("galeriaTitulo") or ""
@@ -104,46 +103,33 @@ def _html_page(
         cloud_dot = "off"
 
     token_dot = "on" if upload_token else "warn"
-    token_line = "Token OK" if upload_token else "Sin token"
 
     event_ready = bool(evento)
     event_title = galeria_titulo if galeria_titulo else (f"Evento {evento}" if evento else "Sin evento")
-    event_sub = f"ID {evento}" if evento else "Configura el ID del día"
-    event_sub = f"{event_sub} · cola {pending} · ok {uploaded}"
+    event_sub = f"ID {evento}" if evento else "Esperando evento remoto"
 
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
     ftp_dot = "on" if ftp.get("running") else ("off" if ftp.get("enabled") is False else "warn")
-    ftp_line = "FTP" if ftp.get("running") else "FTP off"
+    ftp_line = "FTP on" if ftp.get("running") else "FTP off"
 
     gphoto_enabled = bool(gphoto.get("enabled"))
     if not gphoto_enabled:
         usb_dot, usb_line = "off", "USB off"
     elif gphoto.get("running"):
-        usb_dot, usb_line = "on", "USB"
+        usb_dot, usb_line = "on", "USB on"
     elif gphoto.get("available") and gphoto.get("camera"):
         usb_dot, usb_line = "warn", "USB"
     else:
-        usb_dot, usb_line = "warn", "USB?"
+        usb_dot, usb_line = "warn", "USB ?"
 
     queue_dot = "warn" if pending else "on"
-    queue_line = f"Cola {pending}"
     uploaded_dot = "on" if uploaded else "off"
-    uploaded_line = f"OK {uploaded}"
-
-    capture_btn = ""
-    if gphoto_enabled and gphoto.get("available") and (gphoto.get("mode") or "").lower() == "manual":
-        capture_btn = (
-            '<form method="post" action="/api/gphoto/capture" class="capture">'
-            '<button type="submit" class="btn secondary">Disparar USB</button></form>'
-        )
 
     flash_html = ""
     if flash:
         kind = "err" if flash_err else "ok"
         flash_html = f'<div class="flash {kind}">{_esc(flash)}</div>'
-
-    evento_value = _esc(evento) if evento else ""
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -151,7 +137,7 @@ def _html_page(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=320, height=480, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta http-equiv="refresh" content="20" />
+  <meta http-equiv="refresh" content="8" />
   <title>FotoGlow Hub</title>
   <style>
     :root {{
@@ -184,17 +170,17 @@ def _html_page(
       min-height: 100dvh;
       max-width: 320px;
       margin: 0 auto;
-      padding: 10px 12px 12px;
+      padding: 12px 14px 10px;
       background:
         radial-gradient(120% 80% at 50% -10%, #1a2433 0%, transparent 55%),
         var(--bg);
+      gap: 10px;
     }}
     .top {{
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      margin-bottom: 10px;
     }}
     .brand {{
       font-size: 11px;
@@ -203,14 +189,9 @@ def _html_page(
       text-transform: uppercase;
       color: var(--muted);
     }}
-    .dots {{
-      display: flex;
-      gap: 6px;
-      align-items: center;
-    }}
+    .dots {{ display: flex; gap: 6px; align-items: center; }}
     .dot {{
-      width: 8px; height: 8px;
-      border-radius: 50%;
+      width: 8px; height: 8px; border-radius: 50%;
       background: var(--off);
     }}
     .dot.on {{ background: var(--ok); box-shadow: 0 0 6px rgba(61,214,140,.45); }}
@@ -218,13 +199,11 @@ def _html_page(
     .dot.off {{ background: var(--off); }}
 
     .hero {{
-      flex: 0 0 auto;
       text-align: center;
-      padding: 14px 8px 12px;
+      padding: 16px 10px 14px;
       border-radius: 14px;
       background: var(--panel);
       border: 1px solid var(--line);
-      margin-bottom: 10px;
     }}
     .hero .label {{
       font-size: 10px;
@@ -234,7 +213,7 @@ def _html_page(
       margin-bottom: 6px;
     }}
     .hero .title {{
-      font-size: 18px;
+      font-size: 20px;
       font-weight: 650;
       line-height: 1.2;
       color: var(--text);
@@ -244,118 +223,118 @@ def _html_page(
     }}
     .hero .title.empty {{ color: var(--warn); }}
     .hero .sub {{
-      margin-top: 6px;
+      margin-top: 8px;
       font-size: 12px;
       color: var(--muted);
     }}
 
-    .id {{
+    .metrics {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      flex: 1 1 auto;
+      min-height: 120px;
+    }}
+    .metric {{
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      padding: 8px 10px;
-      border-radius: 10px;
-      background: #0a0c10;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      background: var(--panel);
       border: 1px solid var(--line);
-      margin-bottom: 10px;
+      padding: 12px 8px;
     }}
-    .id span {{
-      font-size: 9px;
-      letter-spacing: .1em;
+    .metric .num {{
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+    }}
+    .metric .num.warn {{ color: var(--warn); }}
+    .metric .num.on {{ color: var(--ok); }}
+    .metric .num.off {{ color: var(--muted); }}
+    .metric .lbl {{
+      margin-top: 8px;
+      font-size: 11px;
+      letter-spacing: .14em;
       text-transform: uppercase;
       color: var(--muted);
     }}
-    .id code {{
-      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-      font-size: 13px;
-      color: var(--accent);
-      word-break: break-all;
-      line-height: 1.25;
-    }}
 
-    .chips {{
+    .status {{
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 6px;
-      margin-bottom: 10px;
     }}
-    .chip {{
+    .pill {{
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 7px 8px;
+      justify-content: center;
+      gap: 5px;
+      padding: 8px 4px;
       border-radius: 9px;
-      background: var(--panel);
+      background: #0a0c10;
       border: 1px solid var(--line);
       font-size: 11px;
-      color: var(--muted);
-      min-width: 0;
-    }}
-    .chip strong {{
       color: var(--text);
-      font-weight: 600;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }}
-    .chip .d {{
+    .pill .d {{
       width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
       background: var(--off);
     }}
-    .chip .d.on {{ background: var(--ok); }}
-    .chip .d.warn {{ background: var(--warn); }}
-    .chip .d.off {{ background: var(--off); }}
+    .pill .d.on {{ background: var(--ok); }}
+    .pill .d.warn {{ background: var(--warn); }}
+    .pill .d.off {{ background: var(--off); }}
 
-    form.event {{
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: auto;
+    .last {{
+      border-radius: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: center;
     }}
-    form.event label {{
-      font-size: 10px;
-      letter-spacing: .1em;
+    .last .lbl {{
+      font-size: 9px;
+      letter-spacing: .12em;
       text-transform: uppercase;
       color: var(--muted);
+      margin-bottom: 4px;
     }}
-    form.event input {{
-      width: 100%;
-      height: 44px;
-      font-size: 20px;
-      font-weight: 600;
-      text-align: center;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: #0a0c10;
+    .last .name {{
+      font-size: 13px;
       color: var(--text);
-      outline: none;
-      -moz-appearance: textfield;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }}
-    form.event input::-webkit-outer-spin-button,
-    form.event input::-webkit-inner-spin-button {{ -webkit-appearance: none; }}
-    form.event input:focus {{ border-color: var(--accent); }}
-    .btn {{
-      width: 100%;
-      height: 44px;
-      border: none;
-      border-radius: 10px;
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: .04em;
-      text-transform: uppercase;
-      color: #061412;
-      background: var(--accent);
-      cursor: pointer;
+
+    .foot {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin-top: auto;
+      padding-top: 2px;
     }}
-    .btn:active {{ opacity: .85; }}
-    .btn.secondary {{
-      background: var(--accent-dim);
+    .foot .id {{
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 10px;
       color: var(--accent);
-      border: 1px solid #2a5550;
-      margin-top: 6px;
+      word-break: break-all;
+      text-align: center;
+      line-height: 1.3;
+      max-width: 100%;
+    }}
+    .foot .meta {{
+      font-size: 9px;
+      color: #5c6678;
     }}
     .flash {{
-      margin-bottom: 8px;
       padding: 8px 10px;
       border-radius: 8px;
       font-size: 12px;
@@ -364,21 +343,6 @@ def _html_page(
     }}
     .flash.ok {{ background: var(--accent-dim); color: var(--accent); }}
     .flash.err {{ background: var(--err-bg); color: var(--err); }}
-    .foot {{
-      margin-top: 8px;
-      text-align: center;
-      font-size: 10px;
-      color: #5c6678;
-    }}
-    .last {{
-      font-size: 10px;
-      color: var(--muted);
-      text-align: center;
-      margin-top: 6px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }}
   </style>
 </head>
 <body>
@@ -401,31 +365,35 @@ def _html_page(
     <div class="sub">{_esc(event_sub)}</div>
   </div>
 
-  <div class="id">
-    <span>ID Raspberry</span>
-    <code>{_esc(id_rpi)}</code>
+  <div class="metrics">
+    <div class="metric">
+      <div class="num {queue_dot}">{pending}</div>
+      <div class="lbl">Cola</div>
+    </div>
+    <div class="metric">
+      <div class="num {uploaded_dot}">{uploaded}</div>
+      <div class="lbl">Enviadas</div>
+    </div>
   </div>
 
-  <div class="chips">
-    <div class="chip"><span class="d {cloud_dot}"></span><strong>{_esc(assign_line)}</strong></div>
-    <div class="chip"><span class="d {token_dot}"></span><strong>{_esc(token_line)}</strong></div>
-    <div class="chip"><span class="d {usb_dot}"></span><strong>{_esc(usb_line)}</strong></div>
-    <div class="chip"><span class="d {ftp_dot}"></span><strong>{_esc(ftp_line)}</strong></div>
-    <div class="chip"><span class="d {queue_dot}"></span><strong>{_esc(queue_line)}</strong></div>
-    <div class="chip"><span class="d {uploaded_dot}"></span><strong>{_esc(uploaded_line)}</strong></div>
+  <div class="status">
+    <div class="pill"><span class="d {cloud_dot}"></span>{_esc(assign_line)}</div>
+    <div class="pill"><span class="d {usb_dot}"></span>{_esc(usb_line)}</div>
+    <div class="pill"><span class="d {ftp_dot}"></span>{_esc(ftp_line)}</div>
   </div>
 
-  <form method="post" action="/" class="event">
-    <label for="eventoId">ID evento</label>
-    <input id="eventoId" name="eventoId" type="number" min="1" step="1"
-           inputmode="numeric" value="{evento_value}" placeholder="—" required autocomplete="off" />
-    <button type="submit" class="btn">Activar</button>
-  </form>
-  {capture_btn}
-  <div class="last">Última: {_esc(last_line)}</div>
-  <div class="foot">:{admin_port} · auto-refresh</div>
+  <div class="last">
+    <div class="lbl">Última subida</div>
+    <div class="name">{_esc(last_line)}</div>
+  </div>
+
+  <div class="foot">
+    <div class="id">{_esc(id_rpi)}</div>
+    <div class="meta">remoto · refresh 8s · :{admin_port}</div>
+  </div>
 </body>
 </html>"""
+
 
 
 class AdminHandler(BaseHTTPRequestHandler):
