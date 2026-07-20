@@ -111,7 +111,25 @@ def _html_page(
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
     ftp_dot = "on" if ftp.get("running") else ("off" if ftp.get("enabled") is False else "warn")
-    ftp_line = "FTP on" if ftp.get("running") else "FTP off"
+    ftp_host = str(ftp.get("lanIp") or lan_ip or "—")
+    ftp_port = str(ftp.get("port") or "—")
+    ftp_user = str(ftp.get("user") or "—")
+    ftp_pass = str(ftp.get("pass") or "—")
+    ftp_mode = str(ftp.get("mode") or "pasivo")
+    if ftp.get("running"):
+        ftp_card = f"""
+  <div class="ftp">
+    <div class="ftp-title">FTP cámara</div>
+    <div class="ftp-row"><span>Host</span><strong>{_esc(ftp_host)}</strong></div>
+    <div class="ftp-row"><span>Puerto</span><strong>{_esc(ftp_port)}</strong></div>
+    <div class="ftp-row"><span>Usuario</span><strong>{_esc(ftp_user)}</strong></div>
+    <div class="ftp-row"><span>Clave</span><strong>{_esc(ftp_pass)}</strong></div>
+    <div class="ftp-row"><span>Modo</span><strong>{_esc(ftp_mode)}</strong></div>
+  </div>"""
+    elif ftp.get("enabled") is False:
+        ftp_card = '<div class="ftp off"><div class="ftp-title">FTP desactivado</div></div>'
+    else:
+        ftp_card = '<div class="ftp off"><div class="ftp-title">FTP no iniciado</div></div>'
 
     gphoto_enabled = bool(gphoto.get("enabled"))
     if not gphoto_enabled:
@@ -232,8 +250,8 @@ def _html_page(
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      flex: 1 1 auto;
-      min-height: 120px;
+      flex: 0 0 auto;
+      min-height: 88px;
     }}
     .metric {{
       display: flex;
@@ -243,10 +261,10 @@ def _html_page(
       border-radius: 14px;
       background: var(--panel);
       border: 1px solid var(--line);
-      padding: 12px 8px;
+      padding: 10px 8px;
     }}
     .metric .num {{
-      font-size: 48px;
+      font-size: 36px;
       font-weight: 700;
       line-height: 1;
       letter-spacing: -0.03em;
@@ -256,8 +274,8 @@ def _html_page(
     .metric .num.on {{ color: var(--ok); }}
     .metric .num.off {{ color: var(--muted); }}
     .metric .lbl {{
-      margin-top: 8px;
-      font-size: 11px;
+      margin-top: 6px;
+      font-size: 10px;
       letter-spacing: .14em;
       text-transform: uppercase;
       color: var(--muted);
@@ -265,7 +283,7 @@ def _html_page(
 
     .status {{
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
       gap: 6px;
     }}
     .pill {{
@@ -273,7 +291,7 @@ def _html_page(
       align-items: center;
       justify-content: center;
       gap: 5px;
-      padding: 8px 4px;
+      padding: 7px 4px;
       border-radius: 9px;
       background: #0a0c10;
       border: 1px solid var(--line);
@@ -291,11 +309,48 @@ def _html_page(
     .pill .d.warn {{ background: var(--warn); }}
     .pill .d.off {{ background: var(--off); }}
 
-    .last {{
+    .ftp {{
       border-radius: 12px;
       background: var(--panel);
       border: 1px solid var(--line);
-      padding: 10px 12px;
+      padding: 8px 10px 6px;
+    }}
+    .ftp.off {{
+      text-align: center;
+      color: var(--muted);
+      padding: 10px;
+    }}
+    .ftp-title {{
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }}
+    .ftp-row {{
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      padding: 3px 0;
+      border-top: 1px solid #1c2330;
+      font-size: 12px;
+    }}
+    .ftp-row:first-of-type {{ border-top: none; }}
+    .ftp-row span {{ color: var(--muted); flex-shrink: 0; }}
+    .ftp-row strong {{
+      color: var(--accent);
+      font-weight: 650;
+      font-family: ui-monospace, Consolas, monospace;
+      text-align: right;
+      word-break: break-all;
+    }}
+
+    .last {{
+      border-radius: 10px;
+      background: #0a0c10;
+      border: 1px solid var(--line);
+      padding: 7px 10px;
       text-align: center;
     }}
     .last .lbl {{
@@ -303,10 +358,10 @@ def _html_page(
       letter-spacing: .12em;
       text-transform: uppercase;
       color: var(--muted);
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }}
     .last .name {{
-      font-size: 13px;
+      font-size: 12px;
       color: var(--text);
       white-space: nowrap;
       overflow: hidden;
@@ -379,8 +434,9 @@ def _html_page(
   <div class="status">
     <div class="pill"><span class="d {cloud_dot}"></span>{_esc(assign_line)}</div>
     <div class="pill"><span class="d {usb_dot}"></span>{_esc(usb_line)}</div>
-    <div class="pill"><span class="d {ftp_dot}"></span>{_esc(ftp_line)}</div>
   </div>
+
+  {ftp_card}
 
   <div class="last">
     <div class="lbl">Última subida</div>

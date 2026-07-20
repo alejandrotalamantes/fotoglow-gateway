@@ -78,9 +78,11 @@ def start_ftp_server(
             "host": host,
             "port": port,
             "user": user,
+            "pass": password,
             "lanIp": lan_ip,
             "rootDir": str(root_dir),
             "passivePorts": f"{passive_port_start}-{pasv_end}",
+            "mode": "pasivo",
         }
     )
 
