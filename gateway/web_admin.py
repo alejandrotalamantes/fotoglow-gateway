@@ -24,6 +24,9 @@ log = logging.getLogger("gateway.web")
 
 def _esc(value: object) -> str:
     return html_lib.escape("" if value is None else str(value), quote=True)
+
+
+def local_ipv4() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
