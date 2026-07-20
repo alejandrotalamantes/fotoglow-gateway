@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import html as html_lib
 import re
 import socket
 import threading
@@ -21,7 +22,8 @@ from .sync import sync_client_token
 log = logging.getLogger("gateway.web")
 
 
-def local_ipv4() -> str | None:
+def _esc(value: object) -> str:
+    return html_lib.escape("" if value is None else str(value), quote=True)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
@@ -69,113 +71,352 @@ def _validate_evento(remote_upload_url: str, token: str, evento_id: int) -> dict
     return data
 
 
-def _html_page(*, lan_ip: str | None, admin_port: int, status: dict, cloud: dict) -> str:
+def _html_page(
+    *,
+    lan_ip: str | None,
+    admin_port: int,
+    status: dict,
+    cloud: dict,
+    flash: str | None = None,
+    flash_err: bool = False,
+) -> str:
     ip = lan_ip or "—"
     id_rpi = status.get("idRaspberry") or "—"
     upload_token = status.get("uploadToken") or ""
-    galeria_titulo = status.get("galeriaTitulo") or "—"
+    galeria_titulo = status.get("galeriaTitulo") or ""
     evento = status.get("eventoId")
-    pending = status.get("pendingFiles", 0)
-    updated = status.get("updatedAt") or "—"
+    pending = int(status.get("pendingFiles") or 0)
     last = status.get("lastUpload") or {}
     last_line = last.get("filename") or "—"
 
     if cloud.get("assigned"):
-        assign_line = cloud.get("usuarioNombre") or "Cliente asignado"
-        assign_class = "ok"
+        assign_line = cloud.get("usuarioNombre") or "Cliente OK"
+        cloud_dot = "on"
     elif cloud.get("registered"):
-        assign_line = "Sin cliente — da este ID al administrador"
-        assign_class = "warn"
+        assign_line = "Sin cliente"
+        cloud_dot = "warn"
     else:
-        assign_line = "Sin conexión al hosting"
-        assign_class = "warn"
+        assign_line = "Sin nube"
+        cloud_dot = "off"
 
-    token_ok = "ok" if upload_token else "warn"
-    token_line = "Sincronizado" if upload_token else "Pendiente — asigna la Pi al cliente"
+    token_dot = "on" if upload_token else "warn"
+    token_line = "Token OK" if upload_token else "Sin token"
 
-    bind_class = "ok" if evento and galeria_titulo else "warn"
-    bind_label = galeria_titulo if evento else "Sin evento del día"
+    event_ready = bool(evento)
+    event_title = galeria_titulo if galeria_titulo else (f"Evento {evento}" if evento else "Sin evento")
+    event_sub = f"ID {evento}" if evento else "Configura el ID del día"
 
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
-    if ftp.get("running"):
-        ftp_ip = ftp.get("lanIp") or ip
-        ftp_line = f"Activo — {ftp_ip}:{ftp.get('port')} usuario {ftp.get('user')}"
-        ftp_class = "ok"
-    elif ftp.get("enabled") is False:
-        ftp_line = "Desactivado"
-        ftp_class = ""
-    else:
-        ftp_line = "No iniciado"
-        ftp_class = "warn"
+    ftp_dot = "on" if ftp.get("running") else ("off" if ftp.get("enabled") is False else "warn")
+    ftp_line = "FTP" if ftp.get("running") else "FTP off"
 
-    gphoto_enabled = gphoto.get("enabled")
+    gphoto_enabled = bool(gphoto.get("enabled"))
     if not gphoto_enabled:
-        gphoto_line = "Desactivado"
-        gphoto_class = ""
+        usb_dot, usb_line = "off", "USB off"
     elif gphoto.get("running"):
-        gphoto_line = f"Tethered activo — {gphoto.get('camera') or 'cámara USB'}"
-        gphoto_class = "ok"
-    elif gphoto.get("available"):
-        gphoto_line = f"{gphoto.get('mode') or 'tethered'} — {gphoto.get('camera') or 'sin cámara'}"
-        gphoto_class = "warn" if not gphoto.get("camera") else "ok"
+        usb_dot, usb_line = "on", "USB"
+    elif gphoto.get("available") and gphoto.get("camera"):
+        usb_dot, usb_line = "warn", "USB"
     else:
-        gphoto_line = gphoto.get("lastError") or "gphoto2 no disponible"
-        gphoto_class = "warn"
+        usb_dot, usb_line = "warn", "USB?"
+
+    queue_dot = "warn" if pending else "on"
+    queue_line = f"Cola {pending}" if pending else "Cola 0"
 
     capture_btn = ""
     if gphoto_enabled and gphoto.get("available") and (gphoto.get("mode") or "").lower() == "manual":
-        capture_btn = """
-    <form method="post" action="/api/gphoto/capture" style="margin-top:1rem">
-      <button type="submit" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9)">Disparar por USB</button>
-    </form>"""
+        capture_btn = (
+            '<form method="post" action="/api/gphoto/capture" class="capture">'
+            '<button type="submit" class="btn secondary">Disparar USB</button></form>'
+        )
+
+    flash_html = ""
+    if flash:
+        kind = "err" if flash_err else "ok"
+        flash_html = f'<div class="flash {kind}">{_esc(flash)}</div>'
+
+    evento_value = _esc(evento) if evento else ""
 
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>FotoGlow Gateway</title>
+  <meta name="viewport" content="width=320, height=480, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta http-equiv="refresh" content="20" />
+  <title>FotoGlow Hub</title>
   <style>
-    * {{ box-sizing: border-box; }}
-    body {{ font-family: system-ui, sans-serif; margin: 0; padding: 1.25rem; background: #0f172a; color: #e2e8f0; min-height: 100vh; }}
-    .card {{ max-width: 28rem; margin: 0 auto; background: #1e293b; border-radius: 1rem; padding: 1.25rem 1.5rem; }}
-    h1 {{ font-size: 1.35rem; margin: 0 0 .25rem; color: #f8fafc; }}
-    .sub {{ color: #94a3b8; font-size: .9rem; margin-bottom: 1rem; }}
-    .id-box {{ background: #0f172a; border: 1px solid #334155; border-radius: .65rem; padding: .75rem 1rem; margin-bottom: 1rem; word-break: break-all; font-family: monospace; font-size: 1.1rem; color: #38bdf8; }}
-    label {{ display: block; font-size: .85rem; color: #cbd5e1; margin-bottom: .35rem; margin-top: .75rem; }}
-    input {{ width: 100%; font-size: 1rem; padding: .75rem 1rem; border-radius: .65rem; border: 1px solid #334155; background: #0f172a; color: #f8fafc; }}
-    button {{ width: 100%; margin-top: 1rem; padding: .9rem; font-size: 1.05rem; font-weight: 600; border: none; border-radius: .65rem; background: linear-gradient(135deg, #0ea5e9, #0284c7); color: white; }}
-    .stats {{ margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #334155; font-size: .88rem; color: #94a3b8; line-height: 1.6; }}
-    .ok {{ color: #4ade80; font-weight: 600; }}
-    .warn {{ color: #fbbf24; }}
-    .msg {{ margin-top: 1rem; padding: .75rem 1rem; border-radius: .5rem; background: #14532d; color: #bbf7d0; }}
-    .err {{ background: #450a0a; color: #fecaca; }}
+    :root {{
+      --bg: #0c0e12;
+      --panel: #141820;
+      --line: #232a36;
+      --text: #e8edf5;
+      --muted: #8b95a8;
+      --accent: #3dd6c6;
+      --accent-dim: #1a3d3a;
+      --ok: #3dd68c;
+      --warn: #e6b84d;
+      --off: #4a5568;
+      --err: #e85d5d;
+      --err-bg: #2a1414;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    html, body {{
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }}
+    body {{
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      max-width: 320px;
+      margin: 0 auto;
+      padding: 10px 12px 12px;
+      background:
+        radial-gradient(120% 80% at 50% -10%, #1a2433 0%, transparent 55%),
+        var(--bg);
+    }}
+    .top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .brand {{
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .dots {{
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }}
+    .dot {{
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--off);
+    }}
+    .dot.on {{ background: var(--ok); box-shadow: 0 0 6px rgba(61,214,140,.45); }}
+    .dot.warn {{ background: var(--warn); box-shadow: 0 0 6px rgba(230,184,77,.4); }}
+    .dot.off {{ background: var(--off); }}
+
+    .hero {{
+      flex: 0 0 auto;
+      text-align: center;
+      padding: 14px 8px 12px;
+      border-radius: 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      margin-bottom: 10px;
+    }}
+    .hero .label {{
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }}
+    .hero .title {{
+      font-size: 18px;
+      font-weight: 650;
+      line-height: 1.2;
+      color: var(--text);
+      max-height: 2.4em;
+      overflow: hidden;
+      word-break: break-word;
+    }}
+    .hero .title.empty {{ color: var(--warn); }}
+    .hero .sub {{
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }}
+
+    .id {{
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #0a0c10;
+      border: 1px solid var(--line);
+      margin-bottom: 10px;
+    }}
+    .id span {{
+      font-size: 9px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .id code {{
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 13px;
+      color: var(--accent);
+      word-break: break-all;
+      line-height: 1.25;
+    }}
+
+    .chips {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }}
+    .chip {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 8px;
+      border-radius: 9px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      font-size: 11px;
+      color: var(--muted);
+      min-width: 0;
+    }}
+    .chip strong {{
+      color: var(--text);
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .chip .d {{
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+      background: var(--off);
+    }}
+    .chip .d.on {{ background: var(--ok); }}
+    .chip .d.warn {{ background: var(--warn); }}
+    .chip .d.off {{ background: var(--off); }}
+
+    form.event {{
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: auto;
+    }}
+    form.event label {{
+      font-size: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    form.event input {{
+      width: 100%;
+      height: 44px;
+      font-size: 20px;
+      font-weight: 600;
+      text-align: center;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #0a0c10;
+      color: var(--text);
+      outline: none;
+      -moz-appearance: textfield;
+    }}
+    form.event input::-webkit-outer-spin-button,
+    form.event input::-webkit-inner-spin-button {{ -webkit-appearance: none; }}
+    form.event input:focus {{ border-color: var(--accent); }}
+    .btn {{
+      width: 100%;
+      height: 44px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: #061412;
+      background: var(--accent);
+      cursor: pointer;
+    }}
+    .btn:active {{ opacity: .85; }}
+    .btn.secondary {{
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid #2a5550;
+      margin-top: 6px;
+    }}
+    .flash {{
+      margin-bottom: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.3;
+      text-align: center;
+    }}
+    .flash.ok {{ background: var(--accent-dim); color: var(--accent); }}
+    .flash.err {{ background: var(--err-bg); color: var(--err); }}
+    .foot {{
+      margin-top: 8px;
+      text-align: center;
+      font-size: 10px;
+      color: #5c6678;
+    }}
+    .last {{
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>FotoGlow Gateway</h1>
-    <p class="sub">ID único de esta Raspberry — el administrador lo asigna a un cliente</p>
-    <div class="id-box">{id_rpi}</div>
-
-    <form method="post" action="/">
-      <label for="eventoId">ID evento cabina (del día)</label>
-      <input id="eventoId" name="eventoId" type="number" min="1" step="1" value="{evento if evento else ''}" placeholder="Ej. 42" required />
-      <button type="submit">Activar evento del día</button>
-    </form>
-
-    <div class="stats">
-      <div>Cliente: <strong class="{assign_class}">{assign_line}</strong></div>
-      <div>Token cliente: <strong class="{token_ok}">{token_line}</strong></div>
-      <div>Evento activo: <strong class="{bind_class}">{bind_label}</strong></div>
-      <div>IP Pi: <strong>{ip}</strong> · Panel: <strong>{admin_port}</strong></div>
-      <div>Cola: <strong>{pending}</strong> · Última subida: <strong>{last_line}</strong></div>
-      <div>FTP: <strong class="{ftp_class}">{ftp_line}</strong></div>
-      <div>USB: <strong class="{gphoto_class}">{gphoto_line}</strong></div>
+  <div class="top">
+    <div class="brand">FotoGlow</div>
+    <div class="dots" title="Nube · Token · USB · FTP · Cola">
+      <span class="dot {cloud_dot}"></span>
+      <span class="dot {token_dot}"></span>
+      <span class="dot {usb_dot}"></span>
+      <span class="dot {ftp_dot}"></span>
+      <span class="dot {queue_dot}"></span>
     </div>
-    {capture_btn}
   </div>
+
+  {flash_html}
+
+  <div class="hero">
+    <div class="label">Evento activo</div>
+    <div class="title{" empty" if not event_ready else ""}">{_esc(event_title)}</div>
+    <div class="sub">{_esc(event_sub)}</div>
+  </div>
+
+  <div class="id">
+    <span>ID Raspberry</span>
+    <code>{_esc(id_rpi)}</code>
+  </div>
+
+  <div class="chips">
+    <div class="chip"><span class="d {cloud_dot}"></span><strong>{_esc(assign_line)}</strong></div>
+    <div class="chip"><span class="d {token_dot}"></span><strong>{_esc(token_line)}</strong></div>
+    <div class="chip"><span class="d {usb_dot}"></span><strong>{_esc(usb_line)}</strong></div>
+    <div class="chip"><span class="d {ftp_dot}"></span><strong>{_esc(ftp_line)}</strong></div>
+    <div class="chip"><span class="d {queue_dot}"></span><strong>{_esc(queue_line)}</strong></div>
+    <div class="chip"><span class="d on"></span><strong>{_esc(ip)}</strong></div>
+  </div>
+
+  <form method="post" action="/" class="event">
+    <label for="eventoId">ID evento</label>
+    <input id="eventoId" name="eventoId" type="number" min="1" step="1"
+           inputmode="numeric" value="{evento_value}" placeholder="—" required autocomplete="off" />
+    <button type="submit" class="btn">Activar</button>
+  </form>
+  {capture_btn}
+  <div class="last">Última: {_esc(last_line)}</div>
+  <div class="foot">:{admin_port} · auto-refresh</div>
 </body>
 </html>"""
 
@@ -334,11 +575,13 @@ class AdminHandler(BaseHTTPRequestHandler):
 
         lan = local_ipv4()
         status, cloud = self._page_context()
-        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status, cloud=cloud)
-        html = html.replace(
-            "</form>",
-            f'<div class="msg">Evento <strong>{meta.get("titulo")}</strong> listo.</div></form>',
-            1,
+        titulo = meta.get("titulo") or f"Evento {evento_id}"
+        html = _html_page(
+            lan_ip=lan,
+            admin_port=self.admin_port,
+            status=status,
+            cloud=cloud,
+            flash=f"Listo: {titulo}",
         )
         body = html.encode("utf-8")
         self.send_response(200)
@@ -350,8 +593,14 @@ class AdminHandler(BaseHTTPRequestHandler):
     def _send_html_error(self, message: str) -> None:
         lan = local_ipv4()
         status, cloud = self._page_context()
-        html = _html_page(lan_ip=lan, admin_port=self.admin_port, status=status, cloud=cloud)
-        html = html.replace("</form>", f'<div class="msg err">{message}</div></form>', 1)
+        html = _html_page(
+            lan_ip=lan,
+            admin_port=self.admin_port,
+            status=status,
+            cloud=cloud,
+            flash=message,
+            flash_err=True,
+        )
         body = html.encode("utf-8")
         self.send_response(400)
         self.send_header("Content-Type", "text/html; charset=utf-8")
