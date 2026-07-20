@@ -111,25 +111,12 @@ def _html_page(
     gphoto = status.get("gphoto") or {}
     ftp = status.get("ftp") or {}
     ftp_dot = "on" if ftp.get("running") else ("off" if ftp.get("enabled") is False else "warn")
+    ftp_line = "FTP on" if ftp.get("running") else ("FTP off" if ftp.get("enabled") is False else "FTP ?")
     ftp_host = str(ftp.get("lanIp") or lan_ip or "—")
     ftp_port = str(ftp.get("port") or "—")
     ftp_user = str(ftp.get("user") or "—")
     ftp_pass = str(ftp.get("pass") or "—")
     ftp_mode = str(ftp.get("mode") or "pasivo")
-    if ftp.get("running"):
-        ftp_card = f"""
-  <div class="ftp">
-    <div class="ftp-title">FTP cámara</div>
-    <div class="ftp-row"><span>Host</span><strong>{_esc(ftp_host)}</strong></div>
-    <div class="ftp-row"><span>Puerto</span><strong>{_esc(ftp_port)}</strong></div>
-    <div class="ftp-row"><span>Usuario</span><strong>{_esc(ftp_user)}</strong></div>
-    <div class="ftp-row"><span>Clave</span><strong>{_esc(ftp_pass)}</strong></div>
-    <div class="ftp-row"><span>Modo</span><strong>{_esc(ftp_mode)}</strong></div>
-  </div>"""
-    elif ftp.get("enabled") is False:
-        ftp_card = '<div class="ftp off"><div class="ftp-title">FTP desactivado</div></div>'
-    else:
-        ftp_card = '<div class="ftp off"><div class="ftp-title">FTP no iniciado</div></div>'
 
     gphoto_enabled = bool(gphoto.get("enabled"))
     if not gphoto_enabled:
@@ -155,7 +142,6 @@ def _html_page(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=320, height=480, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta http-equiv="refresh" content="8" />
   <title>FotoGlow Hub</title>
   <style>
     :root {{
@@ -250,8 +236,8 @@ def _html_page(
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      flex: 0 0 auto;
-      min-height: 88px;
+      flex: 1 1 auto;
+      min-height: 120px;
     }}
     .metric {{
       display: flex;
@@ -261,10 +247,10 @@ def _html_page(
       border-radius: 14px;
       background: var(--panel);
       border: 1px solid var(--line);
-      padding: 10px 8px;
+      padding: 12px 8px;
     }}
     .metric .num {{
-      font-size: 36px;
+      font-size: 48px;
       font-weight: 700;
       line-height: 1;
       letter-spacing: -0.03em;
@@ -274,8 +260,8 @@ def _html_page(
     .metric .num.on {{ color: var(--ok); }}
     .metric .num.off {{ color: var(--muted); }}
     .metric .lbl {{
-      margin-top: 6px;
-      font-size: 10px;
+      margin-top: 8px;
+      font-size: 11px;
       letter-spacing: .14em;
       text-transform: uppercase;
       color: var(--muted);
@@ -283,7 +269,7 @@ def _html_page(
 
     .status {{
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 6px;
     }}
     .pill {{
@@ -291,7 +277,7 @@ def _html_page(
       align-items: center;
       justify-content: center;
       gap: 5px;
-      padding: 7px 4px;
+      padding: 8px 4px;
       border-radius: 9px;
       background: #0a0c10;
       border: 1px solid var(--line);
@@ -300,7 +286,18 @@ def _html_page(
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      font-family: inherit;
     }}
+    button.pill {{
+      width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+    }}
+    .pill.tap {{
+      cursor: pointer;
+      border-color: #2a3a4a;
+    }}
+    .pill.tap:active {{ background: #151a22; }}
     .pill .d {{
       width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
       background: var(--off);
@@ -309,48 +306,11 @@ def _html_page(
     .pill .d.warn {{ background: var(--warn); }}
     .pill .d.off {{ background: var(--off); }}
 
-    .ftp {{
+    .last {{
       border-radius: 12px;
       background: var(--panel);
       border: 1px solid var(--line);
-      padding: 8px 10px 6px;
-    }}
-    .ftp.off {{
-      text-align: center;
-      color: var(--muted);
-      padding: 10px;
-    }}
-    .ftp-title {{
-      font-size: 9px;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 4px;
-    }}
-    .ftp-row {{
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 8px;
-      padding: 3px 0;
-      border-top: 1px solid #1c2330;
-      font-size: 12px;
-    }}
-    .ftp-row:first-of-type {{ border-top: none; }}
-    .ftp-row span {{ color: var(--muted); flex-shrink: 0; }}
-    .ftp-row strong {{
-      color: var(--accent);
-      font-weight: 650;
-      font-family: ui-monospace, Consolas, monospace;
-      text-align: right;
-      word-break: break-all;
-    }}
-
-    .last {{
-      border-radius: 10px;
-      background: #0a0c10;
-      border: 1px solid var(--line);
-      padding: 7px 10px;
+      padding: 10px 12px;
       text-align: center;
     }}
     .last .lbl {{
@@ -358,10 +318,10 @@ def _html_page(
       letter-spacing: .12em;
       text-transform: uppercase;
       color: var(--muted);
-      margin-bottom: 2px;
+      margin-bottom: 4px;
     }}
     .last .name {{
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text);
       white-space: nowrap;
       overflow: hidden;
@@ -398,6 +358,56 @@ def _html_page(
     }}
     .flash.ok {{ background: var(--accent-dim); color: var(--accent); }}
     .flash.err {{ background: var(--err-bg); color: var(--err); }}
+
+    .overlay {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(6, 8, 12, .88);
+      z-index: 20;
+    }}
+    .overlay.show {{ display: flex; }}
+    .overlay .card {{
+      width: 100%;
+      max-width: 288px;
+      border-radius: 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 14px 14px 12px;
+    }}
+    .overlay .card h2 {{
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-align: center;
+    }}
+    .overlay .row {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 0;
+      border-top: 1px solid #1c2330;
+      font-size: 13px;
+    }}
+    .overlay .row:first-of-type {{ border-top: none; }}
+    .overlay .row span {{ color: var(--muted); }}
+    .overlay .row strong {{
+      color: var(--accent);
+      font-family: ui-monospace, Consolas, monospace;
+      text-align: right;
+      word-break: break-all;
+    }}
+    .overlay .hint {{
+      margin-top: 10px;
+      text-align: center;
+      font-size: 10px;
+      color: #5c6678;
+    }}
   </style>
 </head>
 <body>
@@ -434,9 +444,8 @@ def _html_page(
   <div class="status">
     <div class="pill"><span class="d {cloud_dot}"></span>{_esc(assign_line)}</div>
     <div class="pill"><span class="d {usb_dot}"></span>{_esc(usb_line)}</div>
+    <button type="button" class="pill tap" id="ftpBtn"><span class="d {ftp_dot}"></span>{_esc(ftp_line)}</button>
   </div>
-
-  {ftp_card}
 
   <div class="last">
     <div class="lbl">Última subida</div>
@@ -447,6 +456,52 @@ def _html_page(
     <div class="id">{_esc(id_rpi)}</div>
     <div class="meta">remoto · refresh 8s · :{admin_port}</div>
   </div>
+
+  <div class="overlay" id="ftpOverlay">
+    <div class="card">
+      <h2>FTP cámara</h2>
+      <div class="row"><span>Host</span><strong>{_esc(ftp_host)}</strong></div>
+      <div class="row"><span>Puerto</span><strong>{_esc(ftp_port)}</strong></div>
+      <div class="row"><span>Usuario</span><strong>{_esc(ftp_user)}</strong></div>
+      <div class="row"><span>Clave</span><strong>{_esc(ftp_pass)}</strong></div>
+      <div class="row"><span>Modo</span><strong>{_esc(ftp_mode)}</strong></div>
+      <div class="hint">Se oculta en 8 s · toca para cerrar</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {{
+      var overlay = document.getElementById("ftpOverlay");
+      var btn = document.getElementById("ftpBtn");
+      var hideTimer = null;
+      var refreshTimer = setTimeout(function () {{ location.reload(); }}, 8000);
+
+      function scheduleRefresh() {{
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(function () {{ location.reload(); }}, 8000);
+      }}
+
+      function hideFtp() {{
+        overlay.classList.remove("show");
+        clearTimeout(hideTimer);
+        hideTimer = null;
+        scheduleRefresh();
+      }}
+
+      function showFtp() {{
+        clearTimeout(refreshTimer);
+        clearTimeout(hideTimer);
+        overlay.classList.add("show");
+        hideTimer = setTimeout(hideFtp, 8000);
+      }}
+
+      btn.addEventListener("click", function (e) {{
+        e.preventDefault();
+        showFtp();
+      }});
+      overlay.addEventListener("click", function () {{ hideFtp(); }});
+    }})();
+  </script>
 </body>
 </html>"""
 
