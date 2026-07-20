@@ -22,12 +22,12 @@ def _storage_dir_key(upload_token: str | None) -> str:
     return "sin_config"
 
 
-def _processed_dir(cfg: dict, dir_key: str) -> Path:
-    return cfg["processedRoot"] / dir_key
+def _processed_dir(cfg: dict, dir_key: str, evento_id: int) -> Path:
+    return cfg["processedRoot"] / dir_key / str(evento_id)
 
 
-def _failed_dir(cfg: dict, dir_key: str) -> Path:
-    return cfg["failedRoot"] / dir_key
+def _failed_dir(cfg: dict, dir_key: str, evento_id: int) -> Path:
+    return cfg["failedRoot"] / dir_key / str(evento_id)
 
 
 def _walk_files(root: Path) -> list[Path]:
@@ -157,12 +157,12 @@ def run_uploader_loop(cfg: dict) -> None:
                         retry_at[key] = now + uploader["retrySeconds"]
                         continue
 
-                    processed = _processed_dir(cfg, dir_key)
-                    failed = _failed_dir(cfg, dir_key)
+                    processed = _processed_dir(cfg, dir_key, evento_id)
+                    failed = _failed_dir(cfg, dir_key, evento_id)
                     ensure_dir(processed)
                     ensure_dir(failed)
 
-                    log.info("Subiendo %s …", file_path.name)
+                    log.info("Subiendo %s (evento %s) …", file_path.name, evento_id)
                     result = _upload_file(
                         file_path,
                         upload_url=cfg["remoteUploadUrl"],
@@ -184,7 +184,10 @@ def run_uploader_loop(cfg: dict) -> None:
                     log.error("Error subiendo %s: %s", file_path.name, exc)
                     retry_at[key] = now + uploader["retrySeconds"]
                     try:
-                        fail_dest = _unique_dest(_failed_dir(cfg, dir_key), file_path.name)
+                        fail_dest = _unique_dest(
+                            _failed_dir(cfg, dir_key, evento_id),
+                            file_path.name,
+                        )
                         if file_path.exists():
                             shutil.copy2(str(file_path), str(fail_dest))
                     except OSError:

@@ -145,23 +145,34 @@ def get_status(
     from .gphoto_capture import get_gphoto_status
 
     state = load_state()
-    pending = 0
-    if incoming_dir.is_dir():
-        pending = sum(1 for p in incoming_dir.rglob("*") if p.is_file())
+    evento_id = state.get("eventoId")
+    try:
+        evento_id = int(evento_id) if evento_id is not None else None
+        if evento_id is not None and evento_id <= 0:
+            evento_id = None
+    except (TypeError, ValueError):
+        evento_id = None
 
+    # Cola y OK solo del evento activo
+    pending = 0
     uploaded = 0
-    token = _normalize_upload_token(state.get("uploadToken"))
-    if processed_root is not None and token:
-        processed_dir = processed_root / f"token_{token[:16]}"
-        if processed_dir.is_dir():
-            uploaded = sum(1 for p in processed_dir.rglob("*") if p.is_file())
+    if evento_id is not None:
+        if incoming_dir.is_dir():
+            pending = sum(1 for p in incoming_dir.rglob("*") if p.is_file())
+        token = _normalize_upload_token(state.get("uploadToken"))
+        if processed_root is not None and token:
+            processed_dir = processed_root / f"token_{token[:16]}" / str(evento_id)
+            if processed_dir.is_dir():
+                uploaded = sum(1 for p in processed_dir.rglob("*") if p.is_file())
 
     with _lock:
         last = dict(_last_upload)
+    if last and last.get("eventoId") not in (None, evento_id):
+        last = {}
 
     return {
         "idRaspberry": device.get("idRaspberry"),
-        "eventoId": state.get("eventoId"),
+        "eventoId": evento_id,
         "uploadToken": state.get("uploadToken"),
         "galeriaTitulo": state.get("galeriaTitulo"),
         "updatedAt": state.get("updatedAt"),
